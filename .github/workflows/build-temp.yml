@@ -1,0 +1,76 @@
+build-aseprite:
+  name: Build Aseprite
+  needs: fetch-aseprite-info
+  runs-on: ${{ matrix.os }}
+  strategy:
+    matrix:
+      os: [windows-latest]
+    fail-fast: false
+
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Aseprite
+      shell: bash
+      run: |
+        git clone --recurse-submodules -j8 \
+          https://github.com/aseprite/aseprite \
+          --branch ${{ needs.fetch-aseprite-info.outputs.release-tag }}
+
+    - name: Install Skia
+      working-directory: aseprite
+      shell: bash
+      run: |
+        choco install wget -y --no-progress
+        wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip
+        unzip Skia-Windows-Release-x64.zip -d skia
+
+    - uses: aseprite/get-ninja@main
+    - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
+
+    - name: Generating Makefiles
+      shell: bash
+      working-directory: aseprite
+      run: |
+        cmake -S . -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DENABLE_TESTS=OFF \
+          -DENABLE_SCRIPTING=ON \
+          -DLAF_BACKEND=skia \
+          -DSKIA_DIR=$(realpath skia) \
+          -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-x64)
+
+    - name: Compiling
+      shell: bash
+      working-directory: aseprite
+      run: cd build && ninja
+
+    - name: Prepare portable build
+      working-directory: aseprite/build/bin
+      shell: bash
+      run: |
+        echo '# portable mode' > aseprite.ini
+
+    - name: Create zip
+      working-directory: aseprite/build/bin
+      shell: bash
+      run: |
+        7z a Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}-${{ runner.os }}.zip *
+
+    # ✅ 日志中显示生成结果
+    - name: Show build output
+      working-directory: aseprite/build/bin
+      shell: bash
+      run: |
+        echo "==== Build Result ===="
+        ls -lh *.zip
+        sha256sum *.zip
+
+    # ✅ 上传 Artifact（关键）
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}-${{ runner.os }}
+        path: aseprite/build/bin/Aseprite-*.zip
+        retention-days: 14
